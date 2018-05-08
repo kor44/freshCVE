@@ -62,10 +62,10 @@ func TestParseSourcesCfg(t *testing.T) {
 	}
 
 	expected := []Source{
-		Source{Name: "circle src", URL: "http://cve.circl.lu/api/last/2", SourceTypeName: "circl",
+		Source{Name: "circle src", BaseURL: "http://cve.circl.lu/api/last/2", SourceTypeName: "circl",
 			Type: SourceType{ID: "id", Published: "Published", References: "references", Description: "summary"},
 		},
-		Source{Name: "redhat src", URL: "http://access.redhat.com/labs/securitydataapi/2018-05-28", SourceTypeName: "redhat",
+		Source{Name: "redhat src", BaseURL: "http://access.redhat.com/labs/securitydataapi/2018-05-28", SourceTypeName: "redhat",
 			Type: SourceType{ID: "CVE", Published: "public_date", References: "resource_url", Description: "bugzilla_description"},
 		},
 	}

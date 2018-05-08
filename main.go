@@ -160,7 +160,7 @@ func getItems(db *storage.Storage, conf *Config) {
 			}
 
 			log.Debug().Msgf("Get data from source: %s", src.URL)
-			resp, err := client.Get(src.URL)
+			resp, err := client.Get(src.URL())
 			if err != nil {
 				log.Error().Msgf("Failed to get data from source (%s): %s", src.URL, err)
 				return

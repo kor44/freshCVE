@@ -13,7 +13,7 @@ func TestReadConfig(t *testing.T) {
 	result, err := readConfigFile(strings.NewReader(confTempl))
 
 	if err != nil {
-		t.Fatalf("%#v\n)", err)
+		t.Fatalf("%#v\n", err)
 	}
 
 	expected := &Config{}
@@ -40,21 +40,25 @@ func TestReadConfig(t *testing.T) {
 			"type": "circl",
 		},
 		map[string]string{
-			"name": "redhat source",
-			"url":  "http://access.redhat.com/labs/securitydataapi/2018-05-28",
-			"type": "redhat",
+			"name":         "redhat source",
+			"url":          "http://access.redhat.com/labs/securitydataapi/cve.json",
+			"type":         "redhat",
+			"query_params": "?after={{ lastNDays 2 \"2006-01-02\" }}",
 		},
 	}
 
+	queryParam, _ := cve.Parse("?after={{ lastNDays 2 \"2006-01-02\" }}")
+
 	expected.Sources = []cve.Source{
 		cve.Source{
-			"circle source (last two days)", "http://cve.circl.lu/api/last/2", "circl",
-			cve.SourceType{"id", "Published", "references", "summary"},
+			Name: "circle source (last two days)", BaseURL: "http://cve.circl.lu/api/last/2", SourceTypeName: "circl",
+			Type: cve.SourceType{"id", "Published", "references", "summary"},
 		},
 
 		cve.Source{
-			"redhat source", "http://access.redhat.com/labs/securitydataapi/2018-05-28", "redhat",
-			cve.SourceType{"CVE", "public_date", "resource_url", "bugzilla_description"},
+			Name: "redhat source", BaseURL: "http://access.redhat.com/labs/securitydataapi/cve.json", SourceTypeName: "redhat",
+			Type:       cve.SourceType{"CVE", "public_date", "resource_url", "bugzilla_description"},
+			QueryParam: queryParam,
 		},
 	}
 
@@ -64,6 +68,12 @@ func TestReadConfig(t *testing.T) {
 			t.Log(d)
 		}
 		t.Fail()
+	}
 
+	for i, _ := range expected.Sources {
+		if expected.Sources[i].URL() != result.Sources[i].URL() {
+			t.Errorf("Result not equal expected. Differences: %s != %s", expected.Sources[i].URL(), result.Sources[i].URL())
+			t.Fail()
+		}
 	}
 }

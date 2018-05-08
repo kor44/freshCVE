@@ -3,6 +3,8 @@ package main
 import (
 	"freshCVE/cve"
 
+	"github.com/pkg/errors"
+
 	"encoding/json"
 	"io"
 	"time"
@@ -36,6 +38,9 @@ func readConfigFile(r io.Reader) (*Config, error) {
 	cfg := &Config{}
 	dec := json.NewDecoder(r)
 	err := dec.Decode(cfg)
+	if err != nil {
+		return nil, errors.Errorf("Error to read config file: %#v", err)
+	}
 
 	cfg.Timers.RequestTimeout = cfg.Timers.RequestTimeout * time.Second
 	cfg.Timers.CacheUpdateInterval = cfg.Timers.CacheUpdateInterval * time.Second
@@ -49,6 +54,9 @@ func readConfigFile(r io.Reader) (*Config, error) {
 	}
 
 	cfg.Sources, err = cve.ParseSourcesCfg(cfg.SourcesTypes, cfg.SourcesList)
+	if err != nil {
+		err = errors.Wrap(err, "Error to read config file")
+	}
 
 	return cfg, err
 }
@@ -85,8 +93,9 @@ var confTempl = `
 		},
 		{
 			"name": "redhat source",
-			"url": "http://access.redhat.com/labs/securitydataapi/cve.json?after=2018-04-25",
-			"type": "redhat"
+			"url": "http://access.redhat.com/labs/securitydataapi/cve.json",
+			"type": "redhat",
+			"query_params": "?after={{ lastNDays 2 \"2006-01-02\" }}"
 		}
 	]
 }

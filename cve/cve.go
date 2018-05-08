@@ -1,15 +1,35 @@
 package cve
 
 import (
+	"strings"
+
 	"github.com/pkg/errors"
 )
 
 // Source of CVE
 type Source struct {
-	Name    string
-	URL     string
+	Name           string
+	BaseURL        string
 	SourceTypeName string
-	Type  SourceType
+	Type           SourceType
+	QueryParam     *QueryParam
+}
+
+func (src *Source) URL() string {
+	var query string
+	if src.QueryParam != nil {
+		query = src.QueryParam.Value()
+	}
+
+	url := src.BaseURL
+
+	if query != "" && !strings.HasSuffix(src.BaseURL, "/") {
+		url += "/"
+	}
+
+	url += query
+
+	return url
 }
 
 // Parse data from http responce
@@ -19,7 +39,7 @@ func (src *Source) ParseData(data []map[string]interface{}) ([]Item, error) {
 	for _, r := range data {
 		item := Item{
 			ID:          r[src.Type.ID].(string),
-			Source:      src.URL,
+			Source:      src.BaseURL,
 			Published:   r[src.Type.Published],
 			References:  r[src.Type.References],
 			Description: r[src.Type.Description],
@@ -46,7 +66,7 @@ func ParseSourcesCfg(types map[string]interface{}, srcs []map[string]string) ([]
 			case "name":
 				src.Name = v
 			case "url":
-				src.URL = v
+				src.BaseURL = v
 			case "type":
 				src.SourceTypeName = v
 				typeFields, ok := srcTypes[v]
@@ -54,6 +74,14 @@ func ParseSourcesCfg(types map[string]interface{}, srcs []map[string]string) ([]
 					return nil, errors.Errorf("Unknown source type: %s", v)
 				}
 				src.Type = typeFields
+
+			case "query_params":
+				q, err := Parse(v)
+				if err != nil {
+					err := errors.Errorf("query_params has wrong format : %s", err)
+					return nil, err
+				}
+				src.QueryParam = q
 
 			default:
 				err := errors.Errorf("Unknown param in source description: %s", k)
@@ -66,6 +94,7 @@ func ParseSourcesCfg(types map[string]interface{}, srcs []map[string]string) ([]
 	return sources, nil
 }
 
+// SourceType defines json field maping
 type SourceType struct {
 	ID          string
 	Published   string
