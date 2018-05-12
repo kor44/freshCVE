@@ -26,7 +26,11 @@ func (param *QueryParam) Value() string {
 	return string(w.Bytes())
 }
 
-func Parse(param string) (*QueryParam, error) {
+func ParseQueryParam(param string) (*QueryParam, error) {
+	if param == "" {
+		return nil, nil
+	}
+
 	t, err := tmpl.Parse(param)
 	if err != nil {
 		return nil, errors.Wrap(err, "Wrong query param syntax")

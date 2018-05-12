@@ -1,21 +1,22 @@
 package main
 
 import (
-	"flag"
-	"fmt"
-	"freshCVE/cve"
-	"freshCVE/storage"
-
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
-
 	"context"
 	"encoding/json"
+	"flag"
+	"fmt"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"os/signal"
 	"sync"
 	"time"
+
+	"github.com/kor44/freshCVE/cve"
+	"github.com/kor44/freshCVE/storage"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 func printHelp() {
@@ -23,16 +24,24 @@ func printHelp() {
 	flag.PrintDefaults()
 }
 
+var (
+	DefaultLoglevel = zerolog.InfoLevel.String()
+	DefaultAddress  = ""
+	DefaultPort     = 8080
+	DefaultEndpoint = "/api/v1/cves"
+)
+
 func main() {
+	// set log level to ErrorLevel to output if something goes wrong during init
+	zerolog.SetGlobalLevel(zerolog.ErrorLevel)
+
 	var helpFlag bool
 	var confFileName string
-	var logFileName string
-	var logLevel uint
+	var printConfig bool
 
 	flag.BoolVar(&helpFlag, "help", false, "Print this help")
 	flag.StringVar(&confFileName, "config", "", "Name of configuration file (required)")
-	flag.StringVar(&logFileName, "logfile", "", "Name of log file. If empty output to stdout")
-	flag.UintVar(&logLevel, "loglevel", 5, "Logging level: panic - 5, fatal - 4, error - 3, warn -2, info - 1, debug  - 0")
+	flag.BoolVar(&printConfig, "configPrint", false, "print default configuration")
 	flag.Parse()
 
 	if helpFlag {
@@ -40,6 +49,13 @@ func main() {
 		os.Exit(0)
 	}
 
+	// print configuration to stdout
+	if printConfig {
+		fmt.Fprintf(os.Stdout, "%s", defaultConfig)
+		os.Exit(0)
+	}
+
+	// check config option
 	if confFileName == "" {
 		fmt.Fprint(os.Stderr, "Need specify name of configuration file\n")
 		fmt.Fprintf(os.Stderr, "Usage of freshCVE:\n")
@@ -47,33 +63,65 @@ func main() {
 		os.Exit(1)
 	}
 
-	zerolog.SetGlobalLevel(zerolog.Level(logLevel))
-
-	if logFileName == "" {
-		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
-	} else {
-		logFile, err := os.OpenFile(logFileName, os.O_CREATE|os.O_APPEND, 0666)
-		if err != nil {
-			log.Fatal().Msgf("Unable to open log file '%s': %s", logFileName, err)
-		}
-		log.Logger = log.Output(logFile)
-		defer logFile.Close()
-	}
-
 	// read config
 	file, err := os.Open(confFileName)
 	if err != nil {
 		log.Fatal().Msgf("Unable to open config file: %s", err)
+		os.Exit(1)
 	}
 	defer file.Close()
 
 	conf, err := readConfigFile(file)
 	if err != nil {
-		log.Fatal().Msgf("Error to read config file: %#v", err)
+		log.Fatal().Msgf("%s", err)
+		os.Exit(1)
+	}
+
+	// log file configuration
+	if conf.Log.FileName == "" {
+		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+	} else {
+		logFile, err := os.OpenFile(conf.Log.FileName, os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			log.Fatal().Msgf("Unable to open log file '%s': %s", conf.Log.FileName, err)
+		}
+		log.Logger = log.Output(logFile)
+		defer logFile.Close()
+	}
+
+	// log level configuration
+	logLevels := map[string]zerolog.Level{
+		"debug": zerolog.DebugLevel,
+		"info":  zerolog.InfoLevel,
+		"warn":  zerolog.WarnLevel,
+		"error": zerolog.ErrorLevel,
+		"fatal": zerolog.FatalLevel,
+		"panic": zerolog.PanicLevel,
+	}
+
+	if conf.Log.Level == "" {
+		conf.Log.Level = DefaultLoglevel
+	}
+
+	if _, ok := logLevels[conf.Log.Level]; !ok {
+		log.Error().Msgf("Config file error: unknown log level '%s'", conf.Log.Level)
+		conf.Log.Level = DefaultLoglevel
+	}
+	zerolog.SetGlobalLevel(logLevels[conf.Log.Level])
+
+	// check server configuration
+	if conf.Server.Port == 0 {
+		conf.Server.Port = DefaultPort
+	}
+
+	if conf.Server.Endpoint == "" {
+		conf.Server.Endpoint = "/api/v1/cves"
 	}
 
 	// create server
-	server := http.Server{Addr: ":8080"}
+	server := http.Server{
+		Addr: fmt.Sprintf("%s:%d", conf.Server.Address, conf.Server.Port),
+	}
 
 	exitServerCh := make(chan struct{})
 
@@ -101,10 +149,10 @@ func main() {
 		getItems(db, conf)
 	}
 
-	http.HandleFunc("/api/v1/cves", apiHandler(db, conf))
+	http.HandleFunc(conf.Server.Endpoint, apiHandler(db, conf))
 	go updateCache(db, conf, exitServerCh)
 
-	log.Info().Msg("Server start")
+	log.Info().Msgf("Server start: %s%s", server.Addr, conf.Server.Endpoint)
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatal().Msgf("Server process is failed: %s", err)
 	}
@@ -125,22 +173,20 @@ func apiHandler(db *storage.Storage, conf *Config) http.HandlerFunc {
 }
 
 func updateCache(db *storage.Storage, conf *Config, exit <-chan struct{}) {
-	log.Debug().Msg("updateData: started")
-	defer log.Debug().Msg("updateData: stoped")
-	ticker := time.NewTicker(conf.Timers.CacheUpdateInterval)
+	log.Debug().Msg("updateCache routine: started")
+	defer log.Debug().Msg("updateCache routine: stoped")
+	ticker := time.NewTicker(time.Duration(conf.Timers.CacheUpdateInterval) * time.Second)
 	for {
 		select {
 		case <-ticker.C:
-			log.Debug().Msg("updateData: start get data")
-			// здесь есть вероятность того, что пользователь не получит ничего
-			// очищать нужно после того как получил все данные
-			//db.Clear()
-			//db.UpdateStart()
+			log.Debug().Msg("updateCache routine: start get data")
+			db.UpdateStart()
 			getItems(db, conf)
-			//db.UpdateEnd()
+			db.UpdateEnd()
+			log.Debug().Msg("updateCache routine: end get data")
 
 		case <-exit:
-			log.Debug().Msg("updateData: received exit signal")
+			log.Debug().Msg("updateCache routine: received exit signal")
 			return
 		}
 	}
@@ -156,22 +202,29 @@ func getItems(db *storage.Storage, conf *Config) {
 			defer wg.Done()
 
 			client := http.Client{
-				Timeout: conf.Timers.RequestTimeout,
+				Timeout: time.Duration(conf.Timers.RequestTimeout) * time.Second,
 			}
 
-			log.Debug().Msgf("Get data from source: %s", src.URL)
+			log.Debug().Msgf("getItems: get data from source %s", src.URL())
 			resp, err := client.Get(src.URL())
 			if err != nil {
-				log.Error().Msgf("Failed to get data from source (%s): %s", src.URL, err)
+				log.Error().Msgf("getItems: failed to get data from source %s. Error: %s", src.URL(), err)
 				return
 			}
 
 			defer resp.Body.Close()
 
+			if resp.StatusCode < 200 || resp.StatusCode > 299 {
+				answer, _ := ioutil.ReadAll(resp.Body)
+				log.Error().Msgf("getItems: source %s return error. Status: %s, details: %s",
+					src.URL(), resp.Status, string(answer))
+				return
+			}
+
 			d := json.NewDecoder(resp.Body)
 			result := []map[string]interface{}{}
 			if err := d.Decode(&result); err != nil {
-				log.Error().Msgf("Failed to parse data from source (%s): %s", src.URL, err)
+				log.Error().Msgf("getItems: failed to parse data from source %s. Error: %s", src.URL(), err)
 				return
 			}
 

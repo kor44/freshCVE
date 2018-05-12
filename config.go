@@ -1,102 +1,97 @@
 package main
 
 import (
-	"freshCVE/cve"
+	"github.com/kor44/freshCVE/cve"
 
-	"github.com/pkg/errors"
-
-	"encoding/json"
 	"io"
-	"time"
+	"io/ioutil"
+
+	"github.com/hashicorp/hcl"
+	"github.com/pkg/errors"
 )
 
 type Config struct {
 	Server struct {
-		Address string `json:"address"`
-		Port    int    `json:"port"`
-	} `json:"server"`
+		Address  string `hcl:"address"`
+		Port     int    `hcl:"port"`
+		Endpoint string `hcl:"endpoint"`
+	} `hcl:"server"`
 
-	// Path to log file. If empty output to stdout
-	LogFile string `json:"log_file"`
+	Log struct {
+		FileName string `hcl:"file"`
+		Level    string `hcl:"level"`
+	} `hcl:"log"`
 
 	Timers struct {
-		RequestTimeout      time.Duration `json:"request_timeout"`
-		CacheUpdateInterval time.Duration `json:"cache_update_interval"`
-	} `json:"timers"`
+		RequestTimeout      int `hcl:"request_timeout"`
+		CacheUpdateInterval int `hcl:"cache_update_interval"`
+	} `hcl:"timers"`
 
-	SourcesTypes map[string]interface{} `json:"sources_types"`
-	SourcesList  []map[string]string    `json:"sources"`
-
-	Sources []cve.Source `json:"-"`
-}
-
-func (cfg *Config) asdfaf() {
-
+	SourcesTypes map[string]cve.SourceType `hcl:"sources_types"`
+	Sources      map[string]cve.Source     `hcl:"sources"`
 }
 
 func readConfigFile(r io.Reader) (*Config, error) {
 	cfg := &Config{}
-	dec := json.NewDecoder(r)
-	err := dec.Decode(cfg)
+	data, err := ioutil.ReadAll(r)
 	if err != nil {
-		return nil, errors.Errorf("Error to read config file: %#v", err)
+		return nil, errors.Wrapf(err, "Error to read config file")
 	}
 
-	cfg.Timers.RequestTimeout = cfg.Timers.RequestTimeout * time.Second
-	cfg.Timers.CacheUpdateInterval = cfg.Timers.CacheUpdateInterval * time.Second
+	//if err = hcl.Unmarshal(data, &cfg); err != nil {
+	if err = hcl.Unmarshal(data, &cfg); err != nil {
+		return nil, errors.Errorf("Error to parse config file: %s", err)
+	}
+
+	cfg.Timers.RequestTimeout = cfg.Timers.RequestTimeout
+	cfg.Timers.CacheUpdateInterval = cfg.Timers.CacheUpdateInterval
 
 	if cfg.Timers.RequestTimeout == 0 {
-		cfg.Timers.RequestTimeout = 2 * time.Second
+		cfg.Timers.RequestTimeout = 2
 	}
 
 	if cfg.Timers.CacheUpdateInterval == 0 {
-		cfg.Timers.CacheUpdateInterval = 3600 * time.Second
+		cfg.Timers.CacheUpdateInterval = 3600
 	}
 
-	cfg.Sources, err = cve.ParseSourcesCfg(cfg.SourcesTypes, cfg.SourcesList)
-	if err != nil {
+	if err = cve.ParseConfig(cfg.SourcesTypes, cfg.Sources); err != nil {
 		err = errors.Wrap(err, "Error to read config file")
 	}
 
 	return cfg, err
 }
 
-var confTempl = `
-{
-	"server": {
-		"address": "",
-		"port": 8080
-	},
-	"timers": {
-		"request_timeout": 2,
-		"cache_update_interval": 60
-	},
-	"sources_types": {
-		"circl": {
-			"ID": "id",
-			"Published": "Published",
-			"References": "references",
-			"Description": "summary"
-		},
-		"redhat": {
-			"ID": "CVE",
-			"Published": "public_date",
-			"References": "resource_url",
-			"Description": "bugzilla_description"
+/*func checkSourceAndTypes(conf *Config) error {
+	// check all fields of type configuration is not empty
+	for typeName, typeCfg := range conf.SourcesTypes {
+		if typeCfg.ID == "" {
+			return errors.Errorf("Source type '%s' configuration error. Need config 'ID' parameter", typeName)
 		}
-	},
-	"sources": [
-		{
-			"name": "circle source (last two days)",
-			"url": "http://cve.circl.lu/api/last/2",
-			"type": "circl"
-		},
-		{
-			"name": "redhat source",
-			"url": "http://access.redhat.com/labs/securitydataapi/cve.json",
-			"type": "redhat",
-			"query_params": "?after={{ lastNDays 2 \"2006-01-02\" }}"
+		if typeCfg.Description == "" {
+			return errors.Errorf("Source type '%s' configuration error. Need config 'Description' parameter", typeName)
 		}
-	]
+		if typeCfg.Published == "" {
+			return errors.Errorf("Source type '%s' configuration error. Need config 'Published' parameter", typeName)
+		}
+		if typeCfg.References == "" {
+			return errors.Errorf("Source type '%s' configuration error. Need config 'References' parameter", typeName)
+		}
+	}
+
+	// check that source configuration is correct
+	for srcName, srcCfg := range conf.Sources {
+		if conf.Sources[srcName].TypeName == "" {
+			return errors.Errorf("Source '%s' configuration error. Need config  source type", srcName)
+		}
+
+		srcType, ok := conf.SourcesTypes[srcCfg.TypeName]
+		if !ok {
+			return errors.Errorf("Source '%s' configuration error. Unknown source type '%s'", srcName, srcCfg.TypeName)
+		}
+		srcCfg.Type = srcType
+		conf.Sources[srcName] = srcCfg
+	}
+
+	return nil
 }
-`
+*/

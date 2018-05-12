@@ -19,7 +19,7 @@ func TestQueryParams(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
-			result, err := Parse(tc.Input)
+			result, err := ParseQueryParam(tc.Input)
 			if err != nil {
 				t.Error(err)
 				t.Fail()
